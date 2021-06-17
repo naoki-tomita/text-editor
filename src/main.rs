@@ -5,6 +5,7 @@ use std::{io, thread, usize};
 use std::time::{Duration};
 
 
+// https://abrakatabura.hatenablog.com/entry/2017/09/20/065024
 fn init_terminal() -> libc::termios {
     let mut saved_termattr = libc::termios {
         c_iflag: 0,
@@ -33,11 +34,11 @@ fn init_terminal() -> libc::termios {
     saved_termattr
 }
 
-// fn restore_terminal(terminal_attribute: libc::termios) {
-//     unsafe {
-//         libc::tcsetattr(0, libc::TCSANOW, &terminal_attribute);
-//     }
-// }
+fn restore_terminal(terminal_attribute: libc::termios) {
+    unsafe {
+        libc::tcsetattr(0, libc::TCSANOW, &terminal_attribute);
+    }
+}
 
 fn read_key(ptr: &mut [u8; 1]) -> isize {
     unsafe { libc::read(0, ptr.as_ptr() as *mut libc::c_void, 1) }
