@@ -1,9 +1,9 @@
 extern crate libc;
 
-use std::io::{StdoutLock, Write};
-use std::{io, thread, usize};
-use std::time::{Duration};
-
+use std::fs::File;
+use std::io::{Read, StdoutLock, Write};
+use std::time::Duration;
+use std::{env, io, thread, usize};
 
 // https://abrakatabura.hatenablog.com/entry/2017/09/20/065024
 fn init_terminal() -> libc::termios {
@@ -45,16 +45,18 @@ fn read_key(ptr: &mut [u8; 1]) -> isize {
 }
 
 struct Console<'a> {
-    pub lock: StdoutLock<'a>
+    pub lock: StdoutLock<'a>,
 }
 
-impl <'a> Console<'a> {
+impl<'a> Console<'a> {
     fn new(lock: StdoutLock<'a>) -> Self {
         Console { lock }
     }
 
     fn clear(&mut self) {
-        let _ = self.lock.write(format!("{esc}[2J{esc}[1;1H", esc = 27 as char).as_bytes());
+        let _ = self
+            .lock
+            .write(format!("{esc}[2J{esc}[1;1H", esc = 27 as char).as_bytes());
     }
 
     fn write(&mut self, str: String) {
@@ -63,16 +65,23 @@ impl <'a> Console<'a> {
     }
 }
 
-fn main() {
-    println!("Hello, world!");
+struct KeyboardReader {}
+impl KeyboardReader {}
+
+fn main() -> io::Result<()> {
     let _ = init_terminal();
+
     let stdout = io::stdout();
     let lock = stdout.lock();
     let mut console = Console::new(lock);
+
+    let args = env::args().collect::<Vec<String>>();
+    let mut file = File::open(args.get(1).unwrap())?;
+    let mut text_buf = String::new();
+    file.read_to_string(&mut text_buf)?;
+
+    let mut text_editor = TextEditor::new(text_buf);
     let mut buf: [u8; 1] = [0; 1];
-    let mut text_editor = TextEditor::new("foo bar".to_string());
-
-
     loop {
         buf[0] = 0;
         read_key(&mut buf);
@@ -85,7 +94,7 @@ fn main() {
                     66 => text_editor.move_down(),
                     67 => text_editor.move_right(),
                     68 => text_editor.move_left(),
-                    _ => ()
+                    _ => (),
                 };
             }
             127 => text_editor.delete(),
@@ -94,70 +103,39 @@ fn main() {
         };
         let text = text_editor.get_text();
         console.clear();
+        println!("x: {:?}, y: {:?}", text_editor.get_current_x(), text_editor.get_current_y());
         console.write(text);
         thread::sleep(Duration::from_millis(1000 / 30));
     }
     // restore_terminal(saved_termattr);
 }
 
-struct Position {
-    x: i32,
-    y: i32,
-}
-
-impl Position {
-    fn move_right(&mut self) {
-        self.x = self.x + 1;
-    }
-
-    fn move_left(&mut self) {
-        self.x = self.x - 1;
-    }
-
-    fn move_up(&mut self) {
-        self.y = self.y - 1;
-    }
-
-    fn move_down(&mut self) {
-        self.y = self.y - 1;
-    }
-}
-
 struct TextEditor {
     pub text: String,
-    pub cursor: Position,
+    pub cursor: usize,
 }
 
 impl TextEditor {
     fn new(text: String) -> Self {
         Self {
             text,
-            cursor: Position { x: 0, y: 0 },
+            cursor: 0,
         }
     }
 
-    fn get_idx(&self) -> usize {
-        let x = self.cursor.x;
-        let y = self.cursor.y;
-        let splitted = self.text.split("\n");
-        splitted
-            .map(|v| v)
-            .collect::<Vec<&str>>()
-            .split_at(y as usize)
-            .0
-            .iter()
-            .fold(0 as usize, |curr, str| curr + str.len()) + x as usize
+    fn get_line_number(&self) -> usize {
+        let left_side = self.text.split_at(self.cursor).0;
+        left_side.split("\n").count()
     }
 
     fn get_text(&self) -> String {
-        let idx = self.get_idx();
         let mut text = self.text.clone();
-        text.insert(idx as usize, '|');
+        text.insert(self.cursor, '|');
         text
     }
 
     fn insert(&mut self, char: char) {
-        self.text.insert(self.get_idx(), char);
+        self.text.insert(self.cursor, char);
         self.move_right();
     }
 
@@ -165,24 +143,63 @@ impl TextEditor {
     //     self.cursor = cursor;
     // }
 
+    fn current_line_len(&self) -> usize {
+        self.get_lines()[self.cursor].len()
+    }
+
+    fn get_lines(&self) -> Vec<&str> {
+        self.text.split("\n").collect::<Vec<&str>>()
+    }
+
+    fn get_current_x(&self) -> usize {
+        self.text.split_at(self.cursor).0.split("\n").last().unwrap().len()
+    }
+
+    fn get_line_len(&self, at: usize) -> usize {
+        self.get_lines().get(at).unwrap().len()
+    }
+
+    fn get_current_y(&self) -> usize {
+        self.text.split_at(self.cursor).0.split("\n").count() - 1
+    }
+
+    fn line_count(&self) -> usize {
+        self.text.split("\n").count()
+    }
+
     fn move_right(&mut self) {
-        self.cursor.move_right();
+        if self.cursor == self.text.len() {
+            return;
+        }
+        self.cursor = self.cursor + 1;
     }
 
     fn move_left(&mut self) {
-        self.cursor.move_left();
+        if self.cursor == 0 {
+            return;
+        }
+        self.cursor = self.cursor - 1;
     }
 
     fn move_up(&mut self) {
-        self.cursor.move_up();
+        if self.get_current_y() == 0 {
+            return;
+        }
+        self.cursor = self.cursor - self.get_line_len(self.get_current_y() - 1) - 1 //
     }
 
     fn move_down(&mut self) {
-        self.cursor.move_down();
+        if self.line_count() - 1 < self.get_current_y() {
+            return;
+        }
+        self.cursor = self.cursor + self.get_line_len(self.get_current_y()) + 1;
     }
 
     fn delete(&mut self) {
-        self.text.remove(self.get_idx() - 1);
+        if self.cursor == 0 {
+            return;
+        }
+        self.text.remove(self.cursor - 1);
         self.move_left();
     }
 }
